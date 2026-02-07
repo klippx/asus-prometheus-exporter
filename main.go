@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"encoding/base64"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -22,12 +23,69 @@ const COOKIE_EXPIRY_FILE_DIR string = "CookieExpiryTime.json"
 const COOKIE_FILE_DIR string = "cookie.json"
 const COOKIE_EXPIRY_DURATION time.Duration = 2 * time.Hour
 const NAMESPACE = "asus"
+
 var (
-	hostPort = flag.Int("prom.port", 8000, "port to expose prometeus metrics")
-	UserName = flag.String("uname", "nil", "login username for asus router")
-	Password = flag.String("passwd", "nil", "login password for asus router")
+	hostPort       = flag.Int("prom.port", 8000, "port to expose prometeus metrics")
+	UserName       = flag.String("uname", "nil", "login username for asus router")
+	Password       = flag.String("passwd", "nil", "login password for asus router")
 	AUTHENTICATION string
 )
+
+// loggingRoundTripper is a middleware that logs HTTP requests
+type loggingRoundTripper struct {
+	proxied http.RoundTripper
+}
+
+func (lrt *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+
+	// Format headers
+	var headerStr strings.Builder
+	headerStr.WriteString("{ ")
+	first := true
+	for key, values := range req.Header {
+		if !first {
+			headerStr.WriteString(", ")
+		}
+		headerStr.WriteString(fmt.Sprintf("\"%s\": %v", key, values))
+		first = false
+	}
+	headerStr.WriteString(" }")
+
+	log.Printf("HTTP -> %s %s - Headers: %s", req.Method, req.URL, headerStr.String())
+
+	res, err := lrt.proxied.RoundTrip(req)
+
+	duration := time.Since(start)
+	if err != nil {
+		log.Printf("HTTP -> %s %s - Error: %v (took %v)", req.Method, req.URL, err, duration)
+	} else {
+		// Read the response body
+		bodyBytes, readErr := io.ReadAll(res.Body)
+		res.Body.Close()
+
+		if readErr != nil {
+			log.Printf("HTTP <- %s %s - Status: %d (took %v) - Error reading body: %v", req.Method, req.URL, res.StatusCode, duration, readErr)
+		} else {
+			// Format body on a single line
+			bodyStr := strings.ReplaceAll(strings.TrimSpace(string(bodyBytes)), "\n", " ")
+			log.Printf("[HTTP Response] %s %s - Status: %d (took %v) - Body: %s", req.Method, req.URL, res.StatusCode, duration, bodyStr)
+			// Restore the body so downstream code can read it
+			res.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+	}
+
+	return res, err
+}
+
+// newLoggingClient creates an HTTP client with logging middleware
+func newLoggingClient() *http.Client {
+	return &http.Client{
+		Transport: &loggingRoundTripper{
+			proxied: http.DefaultTransport,
+		},
+	}
+}
 
 // unused
 type hookDetails struct {
@@ -138,7 +196,7 @@ func getCookieFromRouter() (asusCookie, error) {
 
 	payload := strings.NewReader(loginAuth)
 
-	client := &http.Client{}
+	client := newLoggingClient()
 
 	req, err := http.NewRequest(method, uri, payload)
 	if err != nil {
@@ -146,7 +204,7 @@ func getCookieFromRouter() (asusCookie, error) {
 	}
 
 	req.Header.Add("User-Agent", "asusrouter-Android-DUTUtil-1.0.0.245")
-	req.Header.Add("Content-Type", "appliction/x-www-form-urlencoded")
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	res, err := client.Do(req)
 	if err != nil {
@@ -304,7 +362,7 @@ func getHook(hook string, asusInterface asusCookie) ([]byte, error) {
 
 	uri := fmt.Sprintf("http://%s%s", targetHost, targetPath)
 
-	client := &http.Client{}
+	client := newLoggingClient()
 	req, err := http.NewRequest(method, uri, payload)
 	if err != nil {
 		return nil, fmt.Errorf("Error Setting Request: %s", err)
@@ -848,7 +906,7 @@ func main() {
 	bc := NewBasicCollector(basicStats)
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(bc)
-	
+
 	mux := http.NewServeMux()
 	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 
