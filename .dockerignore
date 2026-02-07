@@ -1,0 +1,36 @@
+# Git
+
+.git
+.gitignore
+
+# Runtime files
+
+CookieExpiryTime.json
+cookie.json
+nohup.out
+.env
+
+# Documentation
+
+README.md
+\*.md
+
+# Images
+
+_.png
+_.jpg
+\*.jpeg
+
+# Docker
+
+Dockerfile
+docker-compose.yaml
+.dockerignore
+
+# Editor
+
+.vscode
+.idea
+_.swp
+_.swo
+\*~

@@ -17,28 +17,69 @@ Can export:
 - CPU usage on each core
 - Memory usage
 - Incoming and Outgoing Traffic
-    - Bridge Traffic
-    - Internet Traffic
-    - Wired Traffic
-    - Wireless Traffic
+  - Bridge Traffic
+  - Internet Traffic
+  - Wired Traffic
+  - Wireless Traffic
 
 # Requirements
 
 - Golang
 - Asus Router
-    - Works with RT-AX82U
+  - Works with RT-AX82U
 
 # Usage
 
+## Quick Start with Docker Compose (Recommended)
+
+The easiest way to run the exporter with Prometheus and Grafana is using Docker Compose:
+
+1. Clone the GitHub Repository:
+
+```bash
+git clone https://github.com/CipherDoc34/asus-prometheus-exporter.git
+cd asus-prometheus-exporter
+```
+
+2. Create a `.env` file with your router credentials:
+
+```bash
+cp .env.example .env
+# Edit .env and add your router username and password
+```
+
+3. Start all services (exporter, Prometheus, and Grafana):
+
+```bash
+docker compose up
+```
+
+4. Access the services:
+   - Exporter metrics: [http://localhost:8000/metrics](http://localhost:8000/metrics)
+   - Prometheus: [http://localhost:9090](http://localhost:9090)
+   - Grafana: [http://localhost:3000](http://localhost:3000) (credentials: admin/admin)
+
+5. In Grafana:
+   - Add Prometheus as a data source: `http://prometheus:9090`
+   - Start building dashboards!
+
+To stop the services:
+
+```bash
+docker compose down
+```
+
+## Manual Setup
+
 Raspberry Pi (Raspberry Pi OS)
 
-1. Clone the GitHub Repository: 
+1. Clone the GitHub Repository:
 
 ```bash
 git clone https://github.com/CipherDoc34/asus-prometheus-exporter.git
 ```
 
-1. Run the `main.go` file in headless mode:  
+1. Run the `main.go` file in headless mode:
 
 ```bash
 nohup go run asus-prometheus-expoter/main.go -uname=<username default:admin> -passwd=<password>&
@@ -78,10 +119,9 @@ scrape_configs:
 ## Add Grafana Visualization
 
 1. Follow Grafana’s installation steps: [https://grafana.com/docs/grafana/latest/setup-grafana/installation/](https://grafana.com/docs/grafana/latest/setup-grafana/installation/)
-2. Run Grafana Server. 
-    
-    Linux:
-    
+2. Run Grafana Server.
+
+   Linux:
 
 ```bash
 sudo systemctl start grafana-server

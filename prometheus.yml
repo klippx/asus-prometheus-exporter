@@ -1,0 +1,11 @@
+### Example prometheus.yml file for asus-prometheus-exporter
+global:
+  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+# A scrape configuration containing exactly one endpoint to scrape:
+scrape_configs:
+  - job_name: "asus"
+    static_configs:
+      - targets: ["asus-exporter:8000"] # asus-prometheus-exporter endpoint
