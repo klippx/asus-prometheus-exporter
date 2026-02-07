@@ -31,45 +31,52 @@ var (
 	AUTHENTICATION string
 )
 
-// loggingRoundTripper is a middleware that logs HTTP requests
-type loggingRoundTripper struct {
+// asusRoundTripper is a middleware that logs HTTP requests and handles ASUS API errors
+type asusRoundTripper struct {
 	proxied http.RoundTripper
 }
 
-func (lrt *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+func (art *asusRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	start := time.Now()
 
-	// Format headers
-	var headerStr strings.Builder
-	headerStr.WriteString("{ ")
-	first := true
-	for key, values := range req.Header {
-		if !first {
-			headerStr.WriteString(", ")
-		}
-		headerStr.WriteString(fmt.Sprintf("\"%s\": %v", key, values))
-		first = false
-	}
-	headerStr.WriteString(" }")
+	res, err := art.proxied.RoundTrip(req)
 
-	log.Printf("HTTP -> %s %s - Headers: %s", req.Method, req.URL, headerStr.String())
+	duration := time.Since(start).Round(10 * time.Microsecond)
 
-	res, err := lrt.proxied.RoundTrip(req)
-
-	duration := time.Since(start)
 	if err != nil {
-		log.Printf("HTTP -> %s %s - Error: %v (took %v)", req.Method, req.URL, err, duration)
+		log.Printf("%s %s - Error: %v (%v)", req.Method, req.URL, err, duration)
 	} else {
 		// Read the response body
 		bodyBytes, readErr := io.ReadAll(res.Body)
 		res.Body.Close()
 
 		if readErr != nil {
-			log.Printf("HTTP <- %s %s - Status: %d (took %v) - Error reading body: %v", req.Method, req.URL, res.StatusCode, duration, readErr)
+			log.Printf("%s %s %d (%v) - Error reading body: %v", req.Method, req.URL, res.StatusCode, duration, readErr)
 		} else {
 			// Format body on a single line
 			bodyStr := strings.ReplaceAll(strings.TrimSpace(string(bodyBytes)), "\n", " ")
-			log.Printf("[HTTP Response] %s %s - Status: %d (took %v) - Body: %s", req.Method, req.URL, res.StatusCode, duration, bodyStr)
+			log.Printf("%s %s %d (%v) %s", req.Method, req.URL, res.StatusCode, duration, bodyStr)
+			// Check for ASUS API error codes
+			var errorCheck struct {
+				ErrorStatus string `json:"error_status"`
+			}
+			if jsonErr := json.Unmarshal(bodyBytes, &errorCheck); jsonErr == nil && errorCheck.ErrorStatus != "" && errorCheck.ErrorStatus != "0" {
+				// Restore body first so error details are available
+				res.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				log.Printf("ASUS API error: %s", errorCheck.ErrorStatus)
+				switch errorCheck.ErrorStatus {
+				case "1":
+					return res, fmt.Errorf("ASUS API error_status: %s (bad credentials)", errorCheck.ErrorStatus)
+				case "2":
+					return res, fmt.Errorf("ASUS API error_status: %s (unauthorized)", errorCheck.ErrorStatus)
+				case "3":
+					return res, fmt.Errorf("ASUS API error_status: %s (temporary block - too many attempts)", errorCheck.ErrorStatus)
+				case "10":
+					return res, fmt.Errorf("ASUS API error_status: %s (captcha required)", errorCheck.ErrorStatus)
+				default:
+					return res, fmt.Errorf("ASUS API error_status: %s", errorCheck.ErrorStatus)
+				}
+			}
 			// Restore the body so downstream code can read it
 			res.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
@@ -78,10 +85,10 @@ func (lrt *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	return res, err
 }
 
-// newLoggingClient creates an HTTP client with logging middleware
-func newLoggingClient() *http.Client {
+// newAsusClient creates an HTTP client with logging and ASUS API error handling
+func newAsusClient() *http.Client {
 	return &http.Client{
-		Transport: &loggingRoundTripper{
+		Transport: &asusRoundTripper{
 			proxied: http.DefaultTransport,
 		},
 	}
@@ -196,7 +203,7 @@ func getCookieFromRouter() (asusCookie, error) {
 
 	payload := strings.NewReader(loginAuth)
 
-	client := newLoggingClient()
+	client := newAsusClient()
 
 	req, err := http.NewRequest(method, uri, payload)
 	if err != nil {
@@ -233,6 +240,12 @@ func getCookieFromRouter() (asusCookie, error) {
 			continue
 		}
 	}
+
+	// Validate that we received a valid token
+	if MainAsusCookie.AsusToken == "" {
+		return MainAsusCookie, fmt.Errorf("received empty asus_token from router (authentication may have failed)")
+	}
+
 	return MainAsusCookie, nil
 }
 
@@ -296,12 +309,10 @@ func refreshCookie(duration time.Duration) error {
 	if errors.Is(ExpiryErr, os.ErrNotExist) || errors.Is(CookieErr, os.ErrNotExist) {
 		// if either file is does not exist generate/re-generate both
 		// write new cookie expiry
-		log.Printf("%s does not exist\n", COOKIE_EXPIRY_FILE_DIR)
 		if err := writeNewCookieExpiry(duration); err != nil {
 			return fmt.Errorf("writeNewCookieExpiry Error: %s", err)
 		}
 		// write new cookie
-		log.Printf("%s does not exist\n", COOKIE_FILE_DIR)
 		if err := writeNewCookie(); err != nil {
 			return fmt.Errorf("writeNewCookie Error: %s", err)
 		}
@@ -362,14 +373,13 @@ func getHook(hook string, asusInterface asusCookie) ([]byte, error) {
 
 	uri := fmt.Sprintf("http://%s%s", targetHost, targetPath)
 
-	client := newLoggingClient()
+	client := newAsusClient()
 	req, err := http.NewRequest(method, uri, payload)
 	if err != nil {
 		return nil, fmt.Errorf("Error Setting Request: %s", err)
 	}
 
 	req.Header.Add("User-Agent", "asusrouter-Android-DUTUtil-1.0.0.245")
-	req.Header.Add("Content-Type", "appliction/x-www-form-urlencoded")
 	req.Header.Add("Cookie", asusTokenString)
 	res, err := client.Do(req)
 	if err != nil {
@@ -811,13 +821,13 @@ func ScanStats(data UnstructuredData) ([]AsusStats, error) {
 func main() {
 	flag.Parse()
 
-	mainHandler := func(w http.ResponseWriter, r *http.Request) {
+	debugHandler := func(w http.ResponseWriter, r *http.Request) {
 		asusCookieToken, err := getCookie()
 		if err != nil {
 			log.Fatalf("Error Getting Cookie: %s", err)
 		}
 
-		hook := fmt.Sprint("cpu_usage()") // --------- to change into parameter ---------
+		hook := "cpu_usage()" // --------- to change into parameter ---------
 
 		cpuUsage, err := getHook(hook, asusCookieToken)
 		if err != nil {
@@ -910,7 +920,7 @@ func main() {
 	mux := http.NewServeMux()
 	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 
-	mux.HandleFunc("/main", mainHandler)
+	mux.HandleFunc("/debug", debugHandler)
 	mux.HandleFunc("/getcookie", cookie)
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {})
 	mux.Handle("/metrics", promHandler)
