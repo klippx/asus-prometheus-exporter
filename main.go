@@ -407,9 +407,10 @@ func getMetricsStrings(hook string) ([]byte, error) {
 		return nil, fmt.Errorf("Error Getting Hook: %s", err)
 	}
 
-	substring := strings.TrimSpace(string(data)[len(hook)+3 : len(data)-2])
+	// Extract the JSON content by removing the hook prefix and wrapper characters
+	parsedData := strings.TrimSpace(string(data)[len(hook)+3 : len(data)-2])
 
-	return []byte(fmt.Sprintf("{%s}", substring)), nil
+	return []byte(fmt.Sprintf("{%s}", parsedData)), nil
 }
 
 // Gets the metrics from the router returns []byte
@@ -822,23 +823,30 @@ func main() {
 	flag.Parse()
 
 	debugHandler := func(w http.ResponseWriter, r *http.Request) {
-		asusCookieToken, err := getCookie()
+		// Fetch and parse CPU usage data
+		var cpuDataRaw struct {
+			CPUusage cpuUsageUnstructured `json:"cpu_usage"`
+		}
+		body, err := getMetrics("cpu_usage(appobj)")
 		if err != nil {
-			log.Fatalf("Error Getting Cookie: %s", err)
+			log.Fatalf("getMetrics Error: %s", err)
+		}
+		if err = json.Unmarshal(body, &cpuDataRaw); err != nil {
+			log.Fatalf("json unmarshal error: %s", err)
+		}
+		cpuUsage, err := ScanCPUStats(cpuDataRaw.CPUusage)
+		if err != nil {
+			log.Fatalf("ScanCPUStats Error: %s", err)
+		}
+		cpuData, err := json.MarshalIndent(cpuUsage, "", "  ")
+		if err != nil {
+			log.Fatalf("json Marshal Error: %s", err)
 		}
 
-		hook := "cpu_usage()" // --------- to change into parameter ---------
-
-		cpuUsage, err := getHook(hook, asusCookieToken)
-		if err != nil {
-			log.Fatalf("Error Getting Hook: %s", err)
-		}
-
-		substring := strings.TrimSpace(string(cpuUsage)[len(hook)+3 : len(cpuUsage)-2])
 		var netdev struct {
 			NetDev netdevTrafficUnstructured `json:"netdev"`
 		}
-		body, err := getMetrics("netdev(appobj)")
+		body, err = getMetrics("netdev(appobj)")
 		if err != nil {
 			log.Fatalf("getMetrics Error: %s", err)
 		}
@@ -849,12 +857,31 @@ func main() {
 		if err != nil {
 			log.Fatalf("ScanTrafficStats Error: %s", err)
 		}
-		data, err := json.MarshalIndent(trafficUsage, "", "  ")
+		trafficData, err := json.MarshalIndent(trafficUsage, "", "  ")
 		if err != nil {
 			log.Fatalf("json Marshal Error: %s", err)
 		}
 
-		fmt.Fprintf(w, "{%s}\n%s", substring, data)
+		var memusage struct {
+			MemoryUsage MemoryUsageUnstructured `json:"memory_usage"`
+		}
+		body, err = getMetrics("memory_usage(appobj)")
+		if err != nil {
+			log.Fatalf("getMetrics Error: %s", err)
+		}
+		if err = json.Unmarshal(body, &memusage); err != nil {
+			log.Fatalf("json unmarshal error: %s", err)
+		}
+		memoryMetrics, err := ScanMemMetrics(memusage.MemoryUsage)
+		if err != nil {
+			log.Fatalf("ScanMemMetrics Error: %s", err)
+		}
+		memoryData, err := json.MarshalIndent(memoryMetrics, "", "  ")
+		if err != nil {
+			log.Fatalf("json Marshal Error: %s", err)
+		}
+
+		fmt.Fprintf(w, "CPU:\n%s\n\nTraffic:\n%s\n\nMemory:\n%s", cpuData, trafficData, memoryData)
 	}
 
 	cookie := func(w http.ResponseWriter, r *http.Request) {
