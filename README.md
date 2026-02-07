@@ -61,6 +61,8 @@ docker compose up --build
 
 5. Enjoy the show!
 
+![Grafana Dashboard](https://github.com/klippx/asus-prometheus-exporter/blob/260ffaa7711ebd6f4a1348d7a0bfc3666898a732/grafana.png)
+
 In order to do a full restart (purge data and rebuild Go app with changes): `docker compose down -v && docker compose up --build`
 
 ## Manual Setup
