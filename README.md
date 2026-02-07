@@ -51,7 +51,7 @@ cp .env.example .env
 3. Start all services (exporter, Prometheus, and Grafana):
 
 ```bash
-docker compose up
+docker compose up --build
 ```
 
 4. Access the services:
@@ -59,15 +59,9 @@ docker compose up
    - Prometheus: [http://localhost:9090](http://localhost:9090)
    - Grafana: [http://localhost:3000](http://localhost:3000) (credentials: admin/admin)
 
-5. In Grafana:
-   - Add Prometheus as a data source: `http://prometheus:9090`
-   - Start building dashboards!
+5. Enjoy the show!
 
-To stop the services:
-
-```bash
-docker compose down
-```
+In order to do a full restart (purge data and rebuild Go app with changes): `docker compose down -v && docker compose up --build`
 
 ## Manual Setup
 

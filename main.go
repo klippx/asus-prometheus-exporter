@@ -441,8 +441,9 @@ type metrics struct {
 
 // represents the usage of single CPU core
 type cpuUsage struct {
-	CPU_total float64
-	CPU_usage float64
+	CPU_total      float64
+	CPU_usage      float64
+	CPU_percentage float64
 }
 
 // parses the raw CPU hook data
@@ -561,6 +562,8 @@ var _ prometheus.Collector = &basicCollector{}
 // implements prometheus basic collector
 type basicCollector struct {
 	cpuUsage         *prometheus.Desc
+	cpuTotal         *prometheus.Desc
+	cpuUsageRaw      *prometheus.Desc
 	BridgeTraffic    *prometheus.Desc
 	InternetTraffic  *prometheus.Desc
 	WiredTraffic     *prometheus.Desc
@@ -576,6 +579,18 @@ func NewBasicCollector(stats func() ([]AsusStats, error)) prometheus.Collector {
 		cpuUsage: prometheus.NewDesc(
 			"cpu_usage",
 			"the usage of each cpu core",
+			[]string{"cpu_core_number"},
+			nil,
+		),
+		cpuTotal: prometheus.NewDesc(
+			"cpu_total",
+			"total cpu time counter for each core",
+			[]string{"cpu_core_number"},
+			nil,
+		),
+		cpuUsageRaw: prometheus.NewDesc(
+			"cpu_usage_raw",
+			"raw cpu usage counter for each core",
 			[]string{"cpu_core_number"},
 			nil,
 		),
@@ -623,6 +638,8 @@ func NewBasicCollector(stats func() ([]AsusStats, error)) prometheus.Collector {
 func (c *basicCollector) Describe(ch chan<- *prometheus.Desc) {
 	ds := []*prometheus.Desc{
 		c.cpuUsage,
+		c.cpuTotal,
+		c.cpuUsageRaw,
 		c.BridgeTraffic,
 		c.InternetTraffic,
 		c.WiredTraffic,
@@ -652,6 +669,8 @@ func (c *basicCollector) Collect(ch chan<- prometheus.Metric) {
 		// If an error occurs, send an invalid metric to notify
 		// Prometheus of the problem.
 		ch <- prometheus.NewInvalidMetric(c.cpuUsage, err)
+		ch <- prometheus.NewInvalidMetric(c.cpuTotal, err)
+		ch <- prometheus.NewInvalidMetric(c.cpuUsageRaw, err)
 		ch <- prometheus.NewInvalidMetric(c.BridgeTraffic, err)
 		ch <- prometheus.NewInvalidMetric(c.InternetTraffic, err)
 		ch <- prometheus.NewInvalidMetric(c.WiredTraffic, err)
@@ -662,23 +681,25 @@ func (c *basicCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	for _, s := range stats {
 		for i, usage := range s.CPUusage {
-			usages := []struct {
-				CPUCore  string
-				CPUTotal float64
-				CPUusage float64
-			}{
-				{CPUCore: fmt.Sprintf("CPU %d", i+1),
-					CPUTotal: usage.CPU_total,
-					CPUusage: usage.CPU_usage},
-			}
-			for _, usageT := range usages {
-				ch <- prometheus.MustNewConstMetric(
-					c.cpuUsage,
-					prometheus.GaugeValue,
-					usageT.CPUusage,
-					usageT.CPUCore,
-				)
-			}
+			coreLabel := fmt.Sprintf("CPU %d", i+1)
+			ch <- prometheus.MustNewConstMetric(
+				c.cpuUsage,
+				prometheus.GaugeValue,
+				usage.CPU_percentage,
+				coreLabel,
+			)
+			ch <- prometheus.MustNewConstMetric(
+				c.cpuTotal,
+				prometheus.CounterValue,
+				usage.CPU_total,
+				coreLabel,
+			)
+			ch <- prometheus.MustNewConstMetric(
+				c.cpuUsageRaw,
+				prometheus.CounterValue,
+				usage.CPU_usage,
+				coreLabel,
+			)
 		}
 		// ------------------------  Traffic Metrics  --------------------------
 		ch <- fillTraffic(s.NetDev.Bridge.RX, c.BridgeTraffic, "rx")
@@ -737,9 +758,21 @@ func ScanCPUStats(data cpuUsageUnstructured) ([]cpuUsage, error) {
 		return nil, fmt.Errorf("strconv.ParseFloat Error: %s", err)
 	}
 
-	cpuStats = append(cpuStats, cpuUsage{unstructuredCPUStats[0], unstructuredCPUStats[1]})
-	cpuStats = append(cpuStats, cpuUsage{unstructuredCPUStats[2], unstructuredCPUStats[3]})
-	cpuStats = append(cpuStats, cpuUsage{unstructuredCPUStats[4], unstructuredCPUStats[5]})
+	cpuStats = append(cpuStats, cpuUsage{
+		CPU_total:      unstructuredCPUStats[0],
+		CPU_usage:      unstructuredCPUStats[1],
+		CPU_percentage: unstructuredCPUStats[1] / unstructuredCPUStats[0] * 100,
+	})
+	cpuStats = append(cpuStats, cpuUsage{
+		CPU_total:      unstructuredCPUStats[2],
+		CPU_usage:      unstructuredCPUStats[3],
+		CPU_percentage: unstructuredCPUStats[3] / unstructuredCPUStats[2] * 100,
+	})
+	cpuStats = append(cpuStats, cpuUsage{
+		CPU_total:      unstructuredCPUStats[4],
+		CPU_usage:      unstructuredCPUStats[5],
+		CPU_percentage: unstructuredCPUStats[5] / unstructuredCPUStats[4] * 100,
+	})
 
 	//asusStats.CPUusage = cpuStats
 
